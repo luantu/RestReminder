@@ -52,24 +52,63 @@ class AppState: ObservableObject, @unchecked Sendable {
     }
 
     func showReminder() {
+        print("AppState.showReminder开始")
         // 检查是否需要跳过提醒
         if shouldSkipReminder() {
+            print("AppState.showReminder: 跳过提醒")
+            // 跳过提醒时应该重置计时器
             resetTimer()
             return
         }
+        
+        // 检查是否已经在显示提醒，如果是则跳过
+        if showingReminder {
+            print("AppState.showReminder: 已经在显示提醒，跳过")
+            // 已经在显示提醒时，不应该重置计时器，避免冲突
+            return
+        }
 
+        print("AppState.showReminder: 设置showingReminder为true")
         showingReminder = true
         
+        // 停止当前计时器，不再更新状态栏
+        print("AppState.showReminder: 停止当前计时器")
+        timer?.invalidate()
+        timer = nil
+        
         // 设置超时自动关闭
+        print("AppState.showReminder: 设置超时自动关闭")
         setupReminderTimeout()
+        print("AppState.showReminder结束")
     }
     
     func dismissReminder() {
         showingReminder = false
-        resetTimer()
         
         // 清除超时计时器
         clearReminderTimeout()
+        
+        print("AppState.dismissReminder: 全屏提醒已关闭")
+    }
+    
+    // 停止计时 - 完全停止计时器
+    func stopTimerCompletely() {
+        print("AppState.stopTimerCompletely: 完全停止计时")
+        timer?.invalidate()
+        timer = nil
+        remainingTime = 0
+        showingReminder = false
+        clearReminderTimeout()
+    }
+    
+    // 继续计时 - 由用户手动触发
+    func continueTimer() {
+        print("AppState.continueTimer: 继续计时")
+        // 先退出全屏提醒
+        showingReminder = false
+        clearReminderTimeout()
+        // 然后重置计时器
+        resetTimer()
     }
     
     // 设置提醒超时
@@ -97,10 +136,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         }
         
         // 检查当前前台应用是否在屏蔽列表中
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
-            return false
-        }
-
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
         return settings.blockedApps.contains(frontmostApp)
     }
 
@@ -115,10 +151,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         // 从UserDefaults加载设置
         var loadedSettings = Settings()
         
-        if let interval = UserDefaults.standard.object(forKey: "reminderInterval") as? Int {
-            loadedSettings.reminderInterval = interval
-            remainingTime = TimeInterval(interval) * 60.0
-        }
+        // 临时设置为10秒，以便快速测试
+        loadedSettings.reminderInterval = 1 // 1分钟
+        
         if let isBlockingEnabled = UserDefaults.standard.object(forKey: "isBlockingEnabled") as? Bool {
             loadedSettings.isBlockingEnabled = isBlockingEnabled
         }
@@ -128,6 +163,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         
         // 替换整个settings对象，触发didSet观察者
         settings = loadedSettings
+        
+        // 直接设置remainingTime为10秒，这会覆盖didSet中设置的值
+        remainingTime = 10.0 // 10秒
     }
     
     func addBlockedApp(_ bundleIdentifier: String) {
@@ -147,7 +185,7 @@ class AppState: ObservableObject, @unchecked Sendable {
 
 // 设置结构
 struct Settings {
-    var reminderInterval: Int = 30 // 分钟
+    var reminderInterval: Int = 1 // 分钟
     var isBlockingEnabled: Bool = true // 是否启用应用屏蔽
     var blockedApps: [String] = [] // 空默认列表，由用户手动添加
 }
@@ -468,109 +506,91 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         print("状态栏更新: \(timeString)")
     }
-
+    
     @MainActor
     private func showFullScreenReminder() {
-        print("开始显示全屏提醒")
+        // 检查是否已经有提醒窗口，避免重复创建
+        if !reminderWindows.isEmpty {
+            print("提醒窗口已存在，跳过创建")
+            return
+        }
         
-        // 先关闭任何可能存在的旧窗口，避免窗口堆积
-        dismissFullScreenReminder()
+        print("开始显示全屏提醒")
         
         // 为每个屏幕创建全屏窗口
         for (index, screen) in NSScreen.screens.enumerated() {
             print("为屏幕 \(index+1) 创建窗口，尺寸：\(screen.frame)")
 
+            // 使用更简单的方式创建窗口
             let window = NSWindow(
                 contentRect: screen.frame,
                 styleMask: [.borderless],
                 backing: .buffered,
-                defer: false,
+                defer: true,
                 screen: screen
             )
 
-            // 确保窗口在最顶层
-            window.level = .screenSaver
             // 设置窗口属性
+            window.level = .screenSaver
             window.backgroundColor = NSColor.clear
             window.isOpaque = false
             window.isMovable = false
-            window.isReleasedWhenClosed = true
-            // 确保窗口能接收鼠标事件
-            window.isMovableByWindowBackground = false
-            window.acceptsMouseMovedEvents = true
+            window.isReleasedWhenClosed = false  // 避免窗口被过早释放
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenPrimary]
             window.ignoresMouseEvents = false
-            // 确保窗口显示在所有空间
-            window.collectionBehavior = [
-                .canJoinAllSpaces,
-                .fullScreenPrimary,
-                .stationary,
-                .ignoresCycle
-            ]
 
             // 创建SwiftUI视图控制器
-            let contentView = ReminderView(appState: appState, screen: screen)
+            let contentView = ReminderView(
+                continueAction: {
+                    Task {
+                        @MainActor in
+                        self.appState.continueTimer()
+                    }
+                },
+                stopAction: {
+                    Task {
+                        @MainActor in
+                        self.appState.stopTimerCompletely()
+                    }
+                }
+            )
             let hostingController = NSHostingController(rootView: contentView)
-
             window.contentViewController = hostingController
-            window.contentView?.wantsLayer = true
 
-            // 确保窗口覆盖整个屏幕
-            window.setFrame(screen.frame, display: true, animate: false)
+            // 设置窗口显示
             window.makeKeyAndOrderFront(nil)
+            window.setFrame(screen.frame, display: true, animate: false)
 
-            // 存储窗口控制器
-            reminderWindowControllers.append(window)
+            // 存储窗口
+            reminderWindows.append(window)
             print("窗口 \(index+1) 创建完成")
         }
         print("全屏提醒显示完成")
-        
-        // 添加全局事件监听，作为备用关闭机制
-        setupGlobalEventMonitor()
     }
-
-    private var reminderWindowControllers = [NSWindow]()
-    private var globalEventMonitor: Any?
-
+    
+    private var reminderWindows = [NSWindow]()
+    
     @MainActor
     private func dismissFullScreenReminder() {
         print("开始关闭全屏提醒")
-        for window in reminderWindowControllers {
+        // 遍历窗口数组，关闭每个窗口
+        for window in reminderWindows {
+            // 移除窗口的内容视图控制器，确保资源释放
+            window.contentViewController = nil
+            // 关闭窗口
             window.close()
+            // 释放窗口资源
+            window.orderOut(nil)
         }
-        reminderWindowControllers.removeAll()
-        
-        // 移除全局事件监听
-        removeGlobalEventMonitor()
+        // 清空窗口数组，确保所有窗口引用都被释放
+        reminderWindows.removeAll(keepingCapacity: false)
         print("全屏提醒关闭完成")
-    }
-    
-    // 设置全局事件监听，作为备用关闭机制
-    private func setupGlobalEventMonitor() {
-        // 移除之前的监听
-        removeGlobalEventMonitor()
-        
-        // 监听按键事件和鼠标点击事件
-        let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown]
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
-            // 任何按键或鼠标点击都关闭提醒
-            Task {
-                @MainActor in
-                print("全局事件监听触发，关闭提醒")
-                self?.appState.dismissReminder()
-            }
-        }
-        print("全局事件监听已设置")
-    }
-    
-    // 移除全局事件监听
-    private func removeGlobalEventMonitor() {
-        if let monitor = globalEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalEventMonitor = nil
-            print("全局事件监听已移除")
+        // 强制垃圾回收，释放所有不再引用的对象
+        autoreleasepool {
+            // 空的自动释放池，强制释放所有自动释放的对象
         }
     }
-
+    
     // 菜单操作
     @objc func resetTimer() {
         appState.resetTimer()
@@ -892,81 +912,301 @@ struct AddAppSheet: View {
     }
 }
 
-// 全屏提醒视图
-struct ReminderView: View {
-    @ObservedObject var appState: AppState
-    let screen: NSScreen
+// 桌面背景视图
+struct DesktopBackgroundView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        print("DesktopBackgroundView.makeNSView开始")
+        let view = NSView()
+        view.wantsLayer = true
+        
+        // 使用AppleScript获取桌面背景
+        let script = "tell application \"System Events\" to get picture of desktop 1"
+        print("DesktopBackgroundView: 准备执行AppleScript")
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: script) {
+            print("DesktopBackgroundView: AppleScript对象创建成功")
+            let output = scriptObject.executeAndReturnError(&error)
+            print("DesktopBackgroundView: AppleScript执行完成")
+            if error == nil {
+                print("DesktopBackgroundView: AppleScript执行成功")
+                if let filePath = output.stringValue {
+                    print("DesktopBackgroundView: 桌面背景路径: \(filePath)")
+                    if let desktopImage = NSImage(contentsOfFile: filePath) {
+                        print("DesktopBackgroundView: 桌面背景图片加载成功")
+                        view.layer?.contents = desktopImage
+                        view.layer?.contentsGravity = .resizeAspectFill
+                        print("DesktopBackgroundView: 桌面背景图片设置成功")
+                    } else {
+                        print("DesktopBackgroundView: 桌面背景图片加载失败")
+                        view.layer?.backgroundColor = NSColor.black.cgColor
+                    }
+                } else {
+                    print("DesktopBackgroundView: 无法获取桌面背景路径")
+                    view.layer?.backgroundColor = NSColor.black.cgColor
+                }
+            } else {
+                print("DesktopBackgroundView: AppleScript执行失败: \(error!)")
+                view.layer?.backgroundColor = NSColor.black.cgColor
+            }
+        } else {
+            print("DesktopBackgroundView: AppleScript对象创建失败")
+            view.layer?.backgroundColor = NSColor.black.cgColor
+        }
+        
+        print("DesktopBackgroundView.makeNSView结束")
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {
+        // 不需要更新逻辑
+    }
+}
 
+// 自定义透明按钮 - 显示手指鼠标指针和悬停效果
+struct HandCursorButton: NSViewRepresentable {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    
+    func makeNSView(context: Context) -> CustomButton {
+        CustomButton(title: title, systemImage: systemImage, action: action)
+    }
+    
+    func updateNSView(_ nsView: CustomButton, context: Context) {
+        // 不需要更新
+    }
+}
+
+// 自定义按钮内容视图 - 精确控制图标和文字布局
+class ButtonContentView: NSView {
+    private let imageView: NSImageView
+    private let label: NSTextField
+    
+    init(title: String, systemImage: String) {
+        // 创建图标视图
+        imageView = NSImageView()
+        
+        // 使用 NSImageSymbolConfiguration 来正确设置系统图标的大小
+        if let image = NSImage(systemSymbolName: systemImage, accessibilityDescription: title) {
+            let config = NSImage.SymbolConfiguration(pointSize: 25, weight: .regular)
+            let largeImage = image.withSymbolConfiguration(config)
+            imageView.image = largeImage
+        }
+        imageView.contentTintColor = .white
+        imageView.imageScaling = .scaleNone
+        
+        // 创建文字标签 - 保持原来的大小
+        label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 16) // 恢复原来的文字大小
+        label.textColor = .white
+        label.alignment = .center
+        
+        super.init(frame: .zero)
+        
+        // 添加子视图
+        addSubview(imageView)
+        addSubview(label)
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    // 重写布局方法，确保图标和文字在按钮内垂直居中
+    override func layout() {
+        super.layout()
+        
+        // 确保按钮内容视图的尺寸与按钮一致
+        self.frame = bounds
+        
+        // 计算图标和文字的总高度
+        let imageHeight = imageView.intrinsicContentSize.height
+        let labelHeight = label.intrinsicContentSize.height
+        let spacing: CGFloat = 8 // 图标和文字之间的间距
+        let totalHeight = imageHeight + labelHeight + spacing
+        
+        // 计算垂直居中的起始位置（按钮高度60px，居中对齐）
+        let startY = (55 - totalHeight) / 2
+        
+        // 设置图标位置（水平居中，垂直居中对齐）
+        imageView.frame = NSRect(
+            x: (frame.width - imageView.intrinsicContentSize.width) / 2, // 水平居中
+            y: startY + labelHeight + spacing, // 文字上方
+            width: imageView.intrinsicContentSize.width,
+            height: imageHeight
+        )
+        
+        // 设置文字位置（水平居中，垂直居中对齐）
+        label.frame = NSRect(
+            x: 0,
+            y: startY, // 从起始位置开始
+            width: frame.width,
+            height: labelHeight
+        )
+    }
+}
+
+// 自定义 NSButton 子类，实现手指指针和透明背景
+class CustomButton: NSButton {
+    private let buttonAction: () -> Void // 重命名为 buttonAction，避免与 NSButton.action 冲突
+    private let originalBackgroundColor: NSColor = .clear
+    private let hoverBackgroundColor: NSColor = .white.withAlphaComponent(0.1)
+    private let contentView: ButtonContentView // 存储内容视图引用
+    
+    init(title: String, systemImage: String, action: @escaping () -> Void) {
+        self.buttonAction = action
+        
+        // 创建自定义内容视图
+        contentView = ButtonContentView(title: title, systemImage: systemImage)
+        
+        super.init(frame: NSRect(x: 0, y: 0, width: 100, height: 60))
+        
+        // 基本配置
+        self.setButtonType(.momentaryPushIn)
+        self.isBordered = false // 无边框，透明背景
+        self.wantsLayer = true
+        self.layer?.backgroundColor = originalBackgroundColor.cgColor
+        self.layer?.cornerRadius = 8 // 添加圆角
+        
+        // 确保不显示默认的"Button"文本
+        self.title = "" // 设置为空字符串
+        if let cell = self.cell as? NSButtonCell {
+            cell.title = "" // 同时设置cell的标题为空
+        }
+        
+        // 使用自定义视图来精确控制图标和文字布局
+        addSubview(contentView)
+        
+        // 设置目标和动作
+        self.target = self
+        self.action = #selector(buttonClicked)
+        
+        // 立即添加鼠标跟踪区域
+        setupTrackingArea()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    // 按钮点击事件
+    @objc private func buttonClicked() {
+        buttonAction()
+    }
+    
+    // 设置鼠标跟踪区域
+    private func setupTrackingArea() {
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .mouseMoved],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+    }
+    
+    // 重写 mouseEntered 方法，显示手指指针和背景变化
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        NSCursor.pointingHand.set() // 显示手指指针
+        self.layer?.backgroundColor = hoverBackgroundColor.cgColor // 背景变化
+    }
+    
+    // 重写 mouseExited 方法，恢复默认状态
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        NSCursor.arrow.set() // 恢复默认指针
+        self.layer?.backgroundColor = originalBackgroundColor.cgColor // 恢复背景
+    }
+    
+    // 重写 mouseDown 方法，添加点击效果
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        self.layer?.backgroundColor = hoverBackgroundColor.withAlphaComponent(0.2).cgColor // 点击时更明显的背景
+    }
+    
+    // 重写 mouseUp 方法，恢复悬停状态
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        self.layer?.backgroundColor = hoverBackgroundColor.cgColor // 恢复悬停背景
+    }
+    
+    // 确保按钮能接收鼠标事件
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(self.bounds, cursor: NSCursor.pointingHand) // 直接添加指针矩形
+    }
+    
+    // 确保按钮能接收鼠标进入/退出事件
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // 重新添加跟踪区域
+        setupTrackingArea()
+    }
+    
+    // 重写此方法确保按钮能接收鼠标事件
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        return true
+    }
+    
+    // 重写布局方法，确保内容视图也被正确布局
+    override func layout() {
+        super.layout()
+        self.contentView.frame = bounds
+    }
+}
+
+// 全屏提醒视图 - 简化实现，避免内存管理问题
+struct ReminderView: View {
+    let continueAction: () -> Void
+    let stopAction: () -> Void
+    
     var body: some View {
         ZStack {
             // 使用桌面背景
             DesktopBackgroundView()
 
-            // 半透明遮罩
+            // 半透明遮罩 - 50%透明度
             Color.black.opacity(0.5)
+                // 添加透明背景来捕获所有点击事件，避免崩溃
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    // 不执行任何操作，仅用于捕获点击事件
+                }
 
             // 提醒内容
             VStack(spacing: 48) {
                 Text("该休息了！")
                     .font(.system(size: 64, weight: .bold))
                     .foregroundColor(.white)
-                    .shadow(radius: 10)
 
                 Text("站起来活动一下，保护眼睛和身体健康")
                     .font(.system(size: 24))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
-                    .shadow(radius: 10)
 
-                VStack(spacing: 8) {
-                    Button(action: { appState.dismissReminder() }) {
-                        ZStack {
-                            Circle()
-                                .stroke(Color.white, lineWidth: 2)
-                                .frame(width: 32, height: 32)
-                            Image(systemName: "xmark")
-                                .font(.system(size: 20, weight: .bold))
-                                .foregroundColor(.white)
-                                .shadow(radius: 10)
-                        }
-                    }
-                    .buttonStyle(.plain)
-
-                    Text("停止")
-                        .font(.system(size: 16))
-                        .foregroundColor(.white)
-                        .shadow(radius: 10)
+                // 按钮组 - 居中分布
+                HStack(spacing: 64) {
+                    // 继续计时按钮 - 简化为"继续"，使用圆圈+重播图标
+                    HandCursorButton(
+                        title: "继续",
+                        systemImage: "repeat.circle",
+                        action: continueAction
+                    )
+                    .frame(width: 80, height: 60) // 恢复原来的大小
+                    
+                    // 停止按钮 - 使用圆圈+X图标
+                    HandCursorButton(
+                        title: "停止",
+                        systemImage: "xmark.circle",
+                        action: stopAction
+                    )
+                    .frame(width: 80, height: 60) // 恢复原来的大小
                 }
             }
             .padding()
         }
         .ignoresSafeArea()
-        .onTapGesture {
-            appState.dismissReminder()
-        }
-    }
-}
-
-// 桌面背景视图 - 优化版，减少资源消耗
-struct DesktopBackgroundView: NSViewRepresentable {
-    // 静态缓存，避免重复获取
-    static var cachedDesktopImage: NSImage?
-    static var lastCacheTime: Date = .distantPast
-    static let cacheDuration: TimeInterval = 300 // 5分钟缓存
-    
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        
-        // 设置半透明黑色背景，不再使用复杂的桌面背景获取
-        // 简化实现，避免AppleScript可能带来的性能问题和卡死
-        view.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
-        
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        // 不再需要更新逻辑，简化实现
     }
 }
 
