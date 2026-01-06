@@ -6,15 +6,16 @@
 APP_NAME="RestReminder"
 VERSION="1.0"
 BUNDLE_ID="com.example.$APP_NAME"
-BUILD_DIR=".build/release"
+BUILD_DIR="build/release"
 APP_DIR="$APP_NAME.app"
 
 # 清理旧构建
 rm -rf "$APP_DIR"
 rm -rf "$BUILD_DIR"
+rm -rf "build" # 清理整个build目录
 
 # 构建应用
-swift build -c release
+swift build -c release --build-path build
 
 # 创建应用包结构
 mkdir -p "$APP_DIR/Contents/MacOS"
