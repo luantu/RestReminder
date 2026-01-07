@@ -7,6 +7,7 @@ class AppState: ObservableObject, @unchecked Sendable {
     @Published var isPaused = false
     @Published var remainingTime: TimeInterval = 30.0 * 60.0
     @Published var showingReminder = false
+    @Published var remainingReminderTime: TimeInterval = 0 // 提醒剩余时间倒计时
     @Published var settings = Settings() {
         didSet {
             saveSettings()
@@ -116,10 +117,19 @@ class AppState: ObservableObject, @unchecked Sendable {
         // 清除之前的计时器
         clearReminderTimeout()
         
-        // 创建新的超时计时器
-        reminderTimeoutTimer = Timer.scheduledTimer(withTimeInterval: reminderTimeout, repeats: false) { [weak self] _ in
-            print("提醒超时，自动关闭")
-            self?.dismissReminder()
+        // 初始化剩余时间
+        remainingReminderTime = reminderTimeout
+        
+        // 创建重复定时器，每秒更新倒计时
+        reminderTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            
+            if self.remainingReminderTime > 0 {
+                self.remainingReminderTime -= 1
+            } else {
+                print("提醒超时，自动关闭")
+                self.dismissReminder()
+            }
         }
     }
     
@@ -127,6 +137,7 @@ class AppState: ObservableObject, @unchecked Sendable {
     private func clearReminderTimeout() {
         reminderTimeoutTimer?.invalidate()
         reminderTimeoutTimer = nil
+        remainingReminderTime = 0
     }
 
     private func shouldSkipReminder() -> Bool {
@@ -541,6 +552,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // 创建SwiftUI视图控制器
             let contentView = ReminderView(
+                appState: self.appState,
                 continueAction: {
                     Task {
                         @MainActor in
@@ -1158,8 +1170,16 @@ class CustomButton: NSButton {
 
 // 全屏提醒视图 - 简化实现，避免内存管理问题
 struct ReminderView: View {
+    @ObservedObject var appState: AppState
     let continueAction: () -> Void
     let stopAction: () -> Void
+    
+    // 将秒转换为分:秒格式
+    var formattedTime: String {
+        let minutes = Int(appState.remainingReminderTime) / 60
+        let seconds = Int(appState.remainingReminderTime) % 60
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
     
     var body: some View {
         ZStack {
@@ -1175,15 +1195,22 @@ struct ReminderView: View {
                 }
 
             // 提醒内容
-            VStack(spacing: 48) {
-                Text("该休息了！")
+            VStack(spacing: 40) {
+
+                Text("喝口水～活动一下～")
                     .font(.system(size: 64, weight: .bold))
                     .foregroundColor(.white)
-
-                Text("站起来活动一下，保护眼睛和身体健康")
-                    .font(.system(size: 24))
-                    .foregroundColor(.white)
                     .multilineTextAlignment(.center)
+
+
+
+                // 倒计时显示
+                Text(formattedTime)
+                    .font(.system(size: 36, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.vertical, 48)
+
+
 
                 // 按钮组 - 居中分布
                 HStack(spacing: 64) {
@@ -1203,7 +1230,14 @@ struct ReminderView: View {
                     )
                     .frame(width: 80, height: 60) // 恢复原来的大小
                 }
+
+                Text("来财来财来财～～")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+
             }
+            
             .padding()
         }
         .ignoresSafeArea()
