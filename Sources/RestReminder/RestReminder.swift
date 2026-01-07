@@ -183,12 +183,15 @@ class AppState: ObservableObject, @unchecked Sendable {
         if let blockedApps = UserDefaults.standard.object(forKey: "blockedApps") as? [String] {
             loadedSettings.blockedApps = blockedApps
         }
+        if let reminderInterval = UserDefaults.standard.object(forKey: "reminderInterval") as? Int {
+            loadedSettings.reminderInterval = reminderInterval
+        }
         
         // 替换整个settings对象，触发didSet观察者
         settings = loadedSettings
         
-        // 直接设置remainingTime为10秒，这会覆盖didSet中设置的值
-        remainingTime = 3.0 // 10秒
+        // 调试使用，这会覆盖didSet中设置的值
+        // remainingTime = 3.0 // 
         
         // 恢复正常配置：5分钟后自动关闭提醒
         reminderTimeout = 300 // 5分钟后自动关闭提醒
