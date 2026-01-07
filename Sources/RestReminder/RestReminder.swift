@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Foundation
 
 // 全局状态管理
 class AppState: ObservableObject, @unchecked Sendable {
@@ -8,20 +9,25 @@ class AppState: ObservableObject, @unchecked Sendable {
     @Published var remainingTime: TimeInterval = 30.0 * 60.0
     @Published var showingReminder = false
     @Published var remainingReminderTime: TimeInterval = 0 // 提醒剩余时间倒计时
+    @Published var inspirationalQuote: String = "来财来财来财～～" // 励志短语
     @Published var settings = Settings() {
         didSet {
             saveSettings()
             remainingTime = TimeInterval(settings.reminderInterval) * 60.0
         }
     }
+    
+    private var lastQuoteUpdateDate: Date = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date.distantPast // 上次更新励志短语的日期（设置为昨天，确保首次运行会更新）
 
     private var timer: Timer?
     private var reminderTimeoutTimer: Timer?
-    private let reminderTimeout: TimeInterval = 300 // 5分钟后自动关闭提醒
+    private var reminderTimeout: TimeInterval = 300 // 5分钟后自动关闭提醒
 
     init() {
         loadSettings()
         startTimer()
+        // 应用启动时就检查并更新励志短语
+        checkAndUpdateQuote()
     }
 
     func startTimer() {
@@ -72,6 +78,12 @@ class AppState: ObservableObject, @unchecked Sendable {
         print("AppState.showReminder: 设置showingReminder为true")
         showingReminder = true
         
+        // 显示当前励志短语状态
+        print("AppState.showReminder: 当前励志短语 = \(inspirationalQuote)")
+        
+        // 检查并更新励志短语
+        checkAndUpdateQuote()
+        
         // 停止当前计时器，不再更新状态栏
         print("AppState.showReminder: 停止当前计时器")
         timer?.invalidate()
@@ -90,6 +102,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         clearReminderTimeout()
         
         print("AppState.dismissReminder: 全屏提醒已关闭")
+        
+        // 倒计时结束后重新开始新的一轮
+        resetTimer()
     }
     
     // 停止计时 - 完全停止计时器
@@ -177,6 +192,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         
         // 直接设置remainingTime为10秒，这会覆盖didSet中设置的值
         remainingTime = 10.0 // 10秒
+        
+        // 恢复正常配置：5分钟后自动关闭提醒
+        reminderTimeout = 300 // 5分钟后自动关闭提醒
     }
     
     func addBlockedApp(_ bundleIdentifier: String) {
@@ -191,6 +209,137 @@ class AppState: ObservableObject, @unchecked Sendable {
     
     func isAppBlocked(_ bundleIdentifier: String) -> Bool {
         return settings.blockedApps.contains(bundleIdentifier)
+    }
+    
+    // 检查是否需要更新励志短语（每天更新一次）
+    private func shouldUpdateQuote() -> Bool {
+        let currentDate = Date()
+        let calendar = Calendar.current
+        let needsUpdate = !calendar.isDate(lastQuoteUpdateDate, inSameDayAs: currentDate)
+        print("励志短语更新检查: 当前日期 = \(currentDate), 上次更新日期 = \(lastQuoteUpdateDate), 是否需要更新 = \(needsUpdate)")
+        return needsUpdate
+    }
+    
+    // 本地备份励志短语列表（当API不可用时使用）
+    private let backupQuotes = [
+        "行动是成功的阶梯，行动越多，登得越高 —— 陈安之",
+        "成功的秘诀在于坚持目标 —— 迪斯雷利",
+        "每一次努力都是最优的亲近，每一滴汗水都是机遇的滋润 —— 佚名",
+        "今天的付出，明天的收获 —— 佚名",
+        "不为失败找理由，要为成功找方法 —— 佚名",
+        "命运掌握在自己手中 —— 佚名",
+        "只有想不到，没有做不到 —— 佚名",
+        "成功来自坚持，执着创造奇迹 —— 佚名",
+        "每天进步一点点，成功离你近一点 —— 佚名",
+        "梦想不抛弃苦心追求的人，只要不停止追求，你们会沐浴在梦想的光辉之中 —— 佚名"
+    ]
+    
+    // 异步获取新的励志短语
+    private func fetchInspirationalQuote() async {
+        print("开始获取新的励志短语...")
+        // 使用免费的zenquotes.io API获取励志名言
+        let apiUrl = "https://zenquotes.io/api/random"
+        guard let url = URL(string: apiUrl) else {
+            print("无效的API URL: \(apiUrl)")
+            useBackupQuote()
+            return
+        }
+        
+        print("正在发送API请求: \(url)")
+        
+        // 创建带有超时配置的URLSession
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 10 // 10秒超时
+        config.timeoutIntervalForResource = 15 // 15秒资源超时
+        let session = URLSession(configuration: config)
+        
+        do {
+            let (data, response) = try await session.data(from: url)
+            print("API请求成功，响应数据大小: \(data.count) bytes")
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("API响应格式错误")
+                useBackupQuote()
+                return
+            }
+            
+            print("API响应状态码: \(httpResponse.statusCode)")
+            guard httpResponse.statusCode == 200 else {
+                print("API请求失败，状态码: \(httpResponse.statusCode)")
+                useBackupQuote()
+                return
+            }
+            
+            // 解析JSON响应 (zenquotes.io格式)
+            struct ZenQuoteResponse: Codable {
+                let q: String // 名言内容
+                let a: String // 作者
+            }
+            
+            print("开始解析JSON响应...")
+            let quoteResponses = try JSONDecoder().decode([ZenQuoteResponse].self, from: data)
+            guard let quoteResponse = quoteResponses.first else {
+                print("JSON解析成功，但响应数组为空")
+                useBackupQuote()
+                return
+            }
+            print("JSON解析成功: 内容 = \(quoteResponse.q), 作者 = \(quoteResponse.a)")
+            
+            let newQuote = "\(quoteResponse.q) —— \(quoteResponse.a)"
+            print("生成新励志短语: \(newQuote)")
+            
+            // 更新励志短语和日期
+            DispatchQueue.main.async {
+                print("更新励志短语，旧值: \(self.inspirationalQuote), 新值: \(newQuote)")
+                self.inspirationalQuote = newQuote
+                self.lastQuoteUpdateDate = Date()
+                print("励志短语更新完成，新的更新日期: \(self.lastQuoteUpdateDate)")
+            }
+        } catch let error as URLError {
+            print("获取励志短语网络错误: \(error.localizedDescription), 错误代码: \(error.code)")
+            useBackupQuote()
+        } catch let error as DecodingError {
+            print("获取励志短语解析错误: \(error.localizedDescription)")
+            // 尝试打印响应数据
+            do {
+                let (debugData, _) = try await session.data(from: url)
+                let responseString = String(data: debugData, encoding: .utf8) ?? "无法解析响应数据"
+                print("原始响应数据: \(responseString)")
+            } catch {
+                print("调试数据获取失败: \(error.localizedDescription)")
+            }
+            useBackupQuote()
+        } catch {
+            print("获取励志短语失败: \(error.localizedDescription)")
+            useBackupQuote()
+        }
+    }
+    
+    // 使用本地备份励志短语
+    private func useBackupQuote() {
+        print("使用本地备份励志短语...")
+        let randomIndex = Int.random(in: 0..<backupQuotes.count)
+        let backupQuote = backupQuotes[randomIndex]
+        print("选择备份短语: \(backupQuote)")
+        
+        DispatchQueue.main.async {
+            self.inspirationalQuote = backupQuote
+            self.lastQuoteUpdateDate = Date()
+            print("励志短语已更新为备份短语，新的更新日期: \(self.lastQuoteUpdateDate)")
+        }
+    }
+    
+    // 检查并更新励志短语（如果需要）
+    func checkAndUpdateQuote() {
+        print("开始检查励志短语更新...")
+        if shouldUpdateQuote() {
+            print("正在更新励志短语...")
+            Task {
+                await fetchInspirationalQuote()
+            }
+        } else {
+            print("励志短语无需更新，当前短语: \(inspirationalQuote)")
+        }
     }
 }
 
@@ -1178,7 +1327,7 @@ struct ReminderView: View {
     var formattedTime: String {
         let minutes = Int(appState.remainingReminderTime) / 60
         let seconds = Int(appState.remainingReminderTime) % 60
-        return String(format: "%02d:%02d", minutes, seconds)
+        return String(format: "本次休息在 %02d:%02d 后自动结束", minutes, seconds)
     }
     
     var body: some View {
@@ -1194,48 +1343,58 @@ struct ReminderView: View {
                     // 不执行任何操作，仅用于捕获点击事件
                 }
 
-            // 提醒内容
-            VStack(spacing: 40) {
+            ZStack {
+                // 主要内容居中显示
+                VStack(spacing: 40) {
 
-                Text("喝口水～活动一下～")
-                    .font(.system(size: 64, weight: .bold))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-
-
-
-                // 倒计时显示
-                Text(formattedTime)
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.vertical, 48)
+                    Text("喝口水～活动一下～")
+                        .font(.system(size: 66, weight: .bold))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
 
 
 
-                // 按钮组 - 居中分布
-                HStack(spacing: 64) {
-                    // 继续计时按钮 - 简化为"继续"，使用圆圈+重播图标
-                    HandCursorButton(
-                        title: "继续",
-                        systemImage: "repeat.circle",
-                        action: continueAction
-                    )
-                    .frame(width: 80, height: 60) // 恢复原来的大小
-                    
-                    // 停止按钮 - 使用圆圈+X图标
-                    HandCursorButton(
-                        title: "停止",
-                        systemImage: "xmark.circle",
-                        action: stopAction
-                    )
-                    .frame(width: 80, height: 60) // 恢复原来的大小
+                    // 倒计时显示
+                    Text(formattedTime)
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                        .padding(.top, 60)
+
+
+
+                    // 按钮组 - 居中分布
+                    HStack(spacing: 40) {
+                        // 停止按钮 - 使用圆圈+X图标
+                        HandCursorButton(
+                            title: "停止",
+                            systemImage: "xmark.circle",
+                            action: stopAction
+                        )
+                        .frame(width: 80, height: 60) 
+
+                        // 继续计时按钮 - 简化为"继续"，使用圆圈+重播图标
+                        HandCursorButton(
+                            title: "继续",
+                            systemImage: "repeat.circle",
+                            action: continueAction
+                        )
+                        .frame(width: 80, height: 60) 
+                        
+
+                    }
                 }
-
-                Text("来财来财来财～～")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-
+                
+                // 励志短语靠屏幕底部显示
+                VStack {
+                    Spacer()
+                    
+                    Text(appState.inspirationalQuote)
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.bottom, 50) // 底部边距
+                        .padding(.horizontal, 40) // 左右边距
+                }
             }
             
             .padding()
