@@ -237,8 +237,8 @@ class AppState: ObservableObject, @unchecked Sendable {
     // 异步获取新的励志短语
     private func fetchInspirationalQuote() async {
         print("开始获取新的励志短语...")
-        // 使用免费的zenquotes.io API获取励志名言
-        let apiUrl = "https://zenquotes.io/api/random"
+        // 使用hitokoto.cn中文一言API获取励志名言
+        let apiUrl = "https://v1.hitokoto.cn/"
         guard let url = URL(string: apiUrl) else {
             print("无效的API URL: \(apiUrl)")
             useBackupQuote()
@@ -270,22 +270,24 @@ class AppState: ObservableObject, @unchecked Sendable {
                 return
             }
             
-            // 解析JSON响应 (zenquotes.io格式)
-            struct ZenQuoteResponse: Codable {
-                let q: String // 名言内容
-                let a: String // 作者
+            // 解析JSON响应 (hitokoto.cn格式)
+            struct HitokotoResponse: Codable {
+                let hitokoto: String // 名言内容
+                let from: String? // 出处
+                let from_who: String? // 作者
             }
             
             print("开始解析JSON响应...")
-            let quoteResponses = try JSONDecoder().decode([ZenQuoteResponse].self, from: data)
-            guard let quoteResponse = quoteResponses.first else {
-                print("JSON解析成功，但响应数组为空")
-                useBackupQuote()
-                return
-            }
-            print("JSON解析成功: 内容 = \(quoteResponse.q), 作者 = \(quoteResponse.a)")
+            let quoteResponse = try JSONDecoder().decode(HitokotoResponse.self, from: data)
+            print("JSON解析成功: 内容 = \(quoteResponse.hitokoto), 出处/作者 = \(quoteResponse.from ?? quoteResponse.from_who ?? "未知")")
             
-            let newQuote = "\(quoteResponse.q) —— \(quoteResponse.a)"
+            // 组合新励志短语
+            var newQuote = quoteResponse.hitokoto
+            if let source = quoteResponse.from, !source.isEmpty {
+                newQuote += " —— \(source)"
+            } else if let author = quoteResponse.from_who, !author.isEmpty {
+                newQuote += " —— \(author)"
+            }
             print("生成新励志短语: \(newQuote)")
             
             // 更新励志短语和日期
