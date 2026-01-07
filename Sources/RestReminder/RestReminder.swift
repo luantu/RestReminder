@@ -191,7 +191,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         settings = loadedSettings
         
         // 调试使用，这会覆盖didSet中设置的值
-        // remainingTime = 3.0 // 
+        remainingTime = 3.0 // 
         
         // 恢复正常配置：5分钟后自动关闭提醒
         reminderTimeout = 300 // 5分钟后自动关闭提醒
@@ -1158,7 +1158,7 @@ class ButtonContentView: NSView {
         
         // 创建文字标签 - 保持原来的大小
         label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 16) // 恢复原来的文字大小
+        label.font = NSFont.systemFont(ofSize: 14) 
         label.textColor = .white
         label.alignment = .center
         
@@ -1327,17 +1327,17 @@ struct ReminderView: View {
     var formattedTime: String {
         let minutes = Int(appState.remainingReminderTime) / 60
         let seconds = Int(appState.remainingReminderTime) % 60
-        return String(format: "本次休息在 %02d:%02d 后自动结束", minutes, seconds)
+        return String(format: "本次休息将在 %02d:%02d 后自动结束", minutes, seconds)
     }
     
     var body: some View {
         ZStack {
             // 使用桌面背景
             DesktopBackgroundView()
-                .opacity(0.65) // 设置整个背景图片为20%不透明度
+                .opacity(0.7) // 设置整个背景图片为20%不透明度
 
             // 半透明遮罩 - 20%透明度（80%不透明度）
-            Color.black.opacity(0.7)
+            Color.black.opacity(0.8)
                 // 添加透明背景来捕获所有点击事件，避免崩溃
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -1348,7 +1348,7 @@ struct ReminderView: View {
                 // 主要内容居中显示
                 VStack(spacing: 40) {
 
-                    Text("喝口水～活动一下～")
+                    Text("☕ 喝口水～活动一下～")
                         .font(.system(size: 66, weight: .bold))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
@@ -1380,7 +1380,7 @@ struct ReminderView: View {
                             action: continueAction
                         )
                         .frame(width: 80, height: 60) 
-                        
+
 
                     }
                 }
