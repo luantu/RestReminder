@@ -177,9 +177,6 @@ class AppState: ObservableObject, @unchecked Sendable {
         // 从UserDefaults加载设置
         var loadedSettings = Settings()
         
-        // 临时设置为10秒，以便快速测试
-        loadedSettings.reminderInterval = 1 // 1分钟
-        
         if let isBlockingEnabled = UserDefaults.standard.object(forKey: "isBlockingEnabled") as? Bool {
             loadedSettings.isBlockingEnabled = isBlockingEnabled
         }
@@ -191,7 +188,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         settings = loadedSettings
         
         // 直接设置remainingTime为10秒，这会覆盖didSet中设置的值
-        remainingTime = 10.0 // 10秒
+        remainingTime = 3.0 // 10秒
         
         // 恢复正常配置：5分钟后自动关闭提醒
         reminderTimeout = 300 // 5分钟后自动关闭提醒
@@ -1334,9 +1331,10 @@ struct ReminderView: View {
         ZStack {
             // 使用桌面背景
             DesktopBackgroundView()
+                .opacity(0.65) // 设置整个背景图片为20%不透明度
 
-            // 半透明遮罩 - 50%透明度
-            Color.black.opacity(0.5)
+            // 半透明遮罩 - 20%透明度（80%不透明度）
+            Color.black.opacity(0.7)
                 // 添加透明背景来捕获所有点击事件，避免崩溃
                 .contentShape(Rectangle())
                 .onTapGesture {
