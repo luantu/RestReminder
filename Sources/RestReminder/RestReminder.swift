@@ -19,8 +19,8 @@ class AppState: ObservableObject, @unchecked Sendable {
     
     private var lastQuoteUpdateDate: Date = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date.distantPast // 上次更新励志短语的日期（设置为昨天，确保首次运行会更新）
 
-    private var timer: Timer?
-    private var reminderTimeoutTimer: Timer?
+    private var timer: DispatchSourceTimer?
+    private var reminderTimeoutTimer: DispatchSourceTimer?
     private var reminderTimeout: TimeInterval = 300 // 5分钟后自动关闭提醒
 
     init() {
@@ -31,8 +31,13 @@ class AppState: ObservableObject, @unchecked Sendable {
     }
 
     func startTimer() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        // 取消现有的定时器
+        timer?.cancel()
+        
+        // 创建新的DispatchSourceTimer
+        timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        timer?.schedule(deadline: .now(), repeating: .seconds(1))
+        timer?.setEventHandler { [weak self] in
             guard let self = self, !self.isPaused else { return }
 
             if self.remainingTime > 0 {
@@ -41,6 +46,9 @@ class AppState: ObservableObject, @unchecked Sendable {
                 self.showReminder()
             }
         }
+        
+        // 启动定时器
+        timer?.resume()
     }
 
     func resetTimer() {
@@ -55,7 +63,8 @@ class AppState: ObservableObject, @unchecked Sendable {
 
     func stopTimer() {
         isRunning = false
-        timer?.invalidate()
+        timer?.cancel()
+        timer = nil
     }
 
     func showReminder() {
@@ -86,7 +95,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         
         // 停止当前计时器，不再更新状态栏
         print("AppState.showReminder: 停止当前计时器")
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
         
         // 设置超时自动关闭
@@ -110,7 +119,7 @@ class AppState: ObservableObject, @unchecked Sendable {
     // 停止计时 - 完全停止计时器
     func stopTimerCompletely() {
         print("AppState.stopTimerCompletely: 完全停止计时")
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
         remainingTime = 0
         showingReminder = false
@@ -136,7 +145,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         remainingReminderTime = reminderTimeout
         
         // 创建重复定时器，每秒更新倒计时
-        reminderTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        reminderTimeoutTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        reminderTimeoutTimer?.schedule(deadline: .now(), repeating: .seconds(1))
+        reminderTimeoutTimer?.setEventHandler { [weak self] in
             guard let self = self else { return }
             
             if self.remainingReminderTime > 0 {
@@ -146,11 +157,12 @@ class AppState: ObservableObject, @unchecked Sendable {
                 self.dismissReminder()
             }
         }
+        reminderTimeoutTimer?.resume()
     }
     
     // 清除提醒超时
     private func clearReminderTimeout() {
-        reminderTimeoutTimer?.invalidate()
+        reminderTimeoutTimer?.cancel()
         reminderTimeoutTimer = nil
         remainingReminderTime = 0
     }
