@@ -2,6 +2,46 @@ import AppKit
 import SwiftUI
 import Foundation
 
+// 图片缓存管理类
+class ImageCacheManager: ObservableObject {
+    static let shared = ImageCacheManager()
+    @Published var cachedImage: NSImage?
+    private let highResImageUrl = URL(string: "https://source.unsplash.com/random/3840x2160")!
+    private var isLoading = false
+    
+    private init() {
+        // 应用启动时就开始预加载图片
+        preloadImage()
+    }
+    
+    // 预加载高清图片并缓存
+    func preloadImage() {
+        guard !isLoading else { return }
+        isLoading = true
+        
+        let task = URLSession.shared.dataTask(with: highResImageUrl) { [weak self] data, response, error in            
+            defer { self?.isLoading = false }
+            
+            guard let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                return
+            }
+            
+            guard let image = NSImage(data: data) else { return }
+            
+            DispatchQueue.main.async {
+                self?.cachedImage = image
+            }
+        }
+        
+        task.resume()
+    }
+    
+    // 获取缓存图片，如果没有则返回nil
+    func getCachedImage() -> NSImage? {
+        return cachedImage
+    }
+}
+
 // 全局状态管理
 class AppState: ObservableObject, @unchecked Sendable {
     @Published var isRunning = true
@@ -27,7 +67,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         loadSettings()
         startTimer()
         // 应用启动时就检查并更新励志短语
-        checkAndUpdateQuote()
+        // checkAndUpdateQuote()
     }
 
     func startTimer() {
@@ -91,7 +131,7 @@ class AppState: ObservableObject, @unchecked Sendable {
         print("AppState.showReminder: 当前励志短语 = \(inspirationalQuote)")
         
         // 检查并更新励志短语
-        checkAndUpdateQuote()
+        // checkAndUpdateQuote()
         
         // 停止当前计时器，不再更新状态栏
         print("AppState.showReminder: 停止当前计时器")
@@ -1089,47 +1129,99 @@ struct AddAppSheet: View {
 
 // 桌面背景视图
 struct DesktopBackgroundView: NSViewRepresentable {
+    @ObservedObject private var imageCache = ImageCacheManager.shared
+    
+    class Coordinator {
+        // 用于存储Combine订阅
+        var cancellables = Set<AnyCancellable>()
+        // 不需要weak修饰符，因为Coordinator的生命周期与NSView一致
+        var view: NSView?
+        
+        // 观察缓存图片变化
+        func observeCacheChanges(imageCache: ImageCacheManager) {
+            imageCache.$cachedImage
+                .sink { [weak self] newImage in
+                    guard let self = self, let view = self.view, let image = newImage else { return }
+                    DispatchQueue.main.async {
+                        // 只有在4K图片成功加载后，才替换桌面背景
+                        view.layer?.contents = image
+                        view.layer?.contentsGravity = .resizeAspectFill
+                        view.layer?.backgroundColor = nil // 移除背景色，使用图片
+                    }
+                }
+                .store(in: &self.cancellables)
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        return Coordinator()
+    }
+    
     func makeNSView(context: Context) -> NSView {
-        print("DesktopBackgroundView.makeNSView开始")
         let view = NSView()
         view.wantsLayer = true
         
-        // 使用AppleScript获取桌面背景
-        let script = "tell application \"System Events\" to get picture of desktop 1"
-        print("DesktopBackgroundView: 准备执行AppleScript")
-        var error: NSDictionary?
-        if let scriptObject = NSAppleScript(source: script) {
-            print("DesktopBackgroundView: AppleScript对象创建成功")
-            let output = scriptObject.executeAndReturnError(&error)
-            print("DesktopBackgroundView: AppleScript执行完成")
-            if error == nil {
-                print("DesktopBackgroundView: AppleScript执行成功")
-                if let filePath = output.stringValue {
-                    print("DesktopBackgroundView: 桌面背景路径: \(filePath)")
-                    if let desktopImage = NSImage(contentsOfFile: filePath) {
-                        print("DesktopBackgroundView: 桌面背景图片加载成功")
-                        view.layer?.contents = desktopImage
-                        view.layer?.contentsGravity = .resizeAspectFill
-                        print("DesktopBackgroundView: 桌面背景图片设置成功")
-                    } else {
-                        print("DesktopBackgroundView: 桌面背景图片加载失败")
-                        view.layer?.backgroundColor = NSColor.black.cgColor
-                    }
-                } else {
-                    print("DesktopBackgroundView: 无法获取桌面背景路径")
-                    view.layer?.backgroundColor = NSColor.black.cgColor
-                }
-            } else {
-                print("DesktopBackgroundView: AppleScript执行失败: \(error!)")
-                view.layer?.backgroundColor = NSColor.black.cgColor
-            }
+        // 首先始终使用桌面背景作为初始背景
+        useLocalBackupBackground(view: view)
+        
+        // 如果已经有缓存的4K图片，立即替换
+        if let cachedImage = imageCache.getCachedImage() {
+            view.layer?.contents = cachedImage
+            view.layer?.contentsGravity = .resizeAspectFill
+            view.layer?.backgroundColor = nil // 移除背景色，使用图片
         } else {
-            print("DesktopBackgroundView: AppleScript对象创建失败")
-            view.layer?.backgroundColor = NSColor.black.cgColor
+            // 在后台继续预加载4K图片，以便下次使用
+            imageCache.preloadImage()
         }
         
-        print("DesktopBackgroundView.makeNSView结束")
+        // 更新Coordinator的view引用并设置缓存图片变化监听
+        context.coordinator.view = view
+        context.coordinator.observeCacheChanges(imageCache: imageCache)
+        
         return view
+    }
+    
+    // 使用本地备份方案（AppleScript获取桌面背景）作为备选
+    private func useLocalBackupBackground(view: NSView) {
+        // 首先尝试直接使用桌面背景作为默认背景
+        var desktopImage: NSImage?
+        
+        // 方法1：尝试使用AppleScript获取桌面背景
+        let script = "tell application \"System Events\" to get picture of desktop 1"
+        var error: NSDictionary?
+        
+        if let scriptObject = NSAppleScript(source: script) {
+            let output = scriptObject.executeAndReturnError(&error)
+            
+            if error == nil, let filePath = output.stringValue, filePath != "" {
+                // 尝试加载桌面背景图片
+                desktopImage = NSImage(contentsOfFile: filePath)
+            }
+        }
+        
+        // 方法2：如果前两种方法都失败，创建一个简单的渐变背景
+        if desktopImage == nil {
+            // 创建一个简单的渐变背景
+            desktopImage = NSImage(size: NSSize(width: 1920, height: 1080))
+            desktopImage?.lockFocus()
+            
+            // 创建渐变
+            let gradient = NSGradient(colors: [NSColor.blue, NSColor.purple])
+            gradient?.draw(in: NSRect(origin: .zero, size: desktopImage!.size), angle: 45)
+            
+            desktopImage?.unlockFocus()
+        }
+        
+        // 使用获取到的背景图片
+        if let image = desktopImage {
+            view.layer?.contents = image
+            view.layer?.contentsGravity = .resizeAspectFill
+            view.layer?.backgroundColor = nil // 移除背景色，使用图片
+        } else {
+            // 最后的备选：黑色背景
+            view.layer?.backgroundColor = NSColor.black.cgColor
+            view.layer?.contents = nil
+        }
     }
     
     func updateNSView(_ nsView: NSView, context: Context) {
@@ -1163,7 +1255,7 @@ class ButtonContentView: NSView {
         
         // 使用 NSImageSymbolConfiguration 来正确设置系统图标的大小
         if let image = NSImage(systemSymbolName: systemImage, accessibilityDescription: title) {
-            let config = NSImage.SymbolConfiguration(pointSize: 25, weight: .regular)
+            let config = NSImage.SymbolConfiguration(pointSize: 32, weight: .regular)
             let largeImage = image.withSymbolConfiguration(config)
             imageView.image = largeImage
         }
@@ -1194,30 +1286,48 @@ class ButtonContentView: NSView {
         // 确保按钮内容视图的尺寸与按钮一致
         self.frame = bounds
         
-        // 计算图标和文字的总高度
         let imageHeight = imageView.intrinsicContentSize.height
         let labelHeight = label.intrinsicContentSize.height
-        let spacing: CGFloat = 8 // 图标和文字之间的间距
-        let totalHeight = imageHeight + labelHeight + spacing
         
-        // 计算垂直居中的起始位置（按钮高度60px，居中对齐）
-        let startY = (55 - totalHeight) / 2
-        
-        // 设置图标位置（水平居中，垂直居中对齐）
-        imageView.frame = NSRect(
-            x: (frame.width - imageView.intrinsicContentSize.width) / 2, // 水平居中
-            y: startY + labelHeight + spacing, // 文字上方
-            width: imageView.intrinsicContentSize.width,
-            height: imageHeight
-        )
-        
-        // 设置文字位置（水平居中，垂直居中对齐）
-        label.frame = NSRect(
-            x: 0,
-            y: startY, // 从起始位置开始
-            width: frame.width,
-            height: labelHeight
-        )
+        // 如果标题为空，只显示图标并居中
+        if label.stringValue.isEmpty {
+            // 设置图标位置（水平和垂直居中）
+            imageView.frame = NSRect(
+                x: (frame.width - imageView.intrinsicContentSize.width) / 2, // 水平居中
+                y: (55 - imageHeight) / 2, // 垂直居中
+                width: imageView.intrinsicContentSize.width,
+                height: imageHeight
+            )
+            
+            // 隐藏文字
+            label.isHidden = true
+        } else {
+            // 同时显示图标和文字的情况
+            let spacing: CGFloat = 8 // 图标和文字之间的间距
+            let totalHeight = imageHeight + labelHeight + spacing
+            
+            // 计算垂直居中的起始位置（按钮高度60px，居中对齐）
+            let startY = (55 - totalHeight) / 2
+            
+            // 设置图标位置（水平居中，垂直居中对齐）
+            imageView.frame = NSRect(
+                x: (frame.width - imageView.intrinsicContentSize.width) / 2, // 水平居中
+                y: startY + labelHeight + spacing, // 文字上方
+                width: imageView.intrinsicContentSize.width,
+                height: imageHeight
+            )
+            
+            // 设置文字位置（水平居中，垂直居中对齐）
+            label.frame = NSRect(
+                x: 0,
+                y: startY, // 从起始位置开始
+                width: frame.width,
+                height: labelHeight
+            )
+            
+            // 显示文字
+            label.isHidden = false
+        }
     }
 }
 
@@ -1234,7 +1344,7 @@ class CustomButton: NSButton {
         // 创建自定义内容视图
         contentView = ButtonContentView(title: title, systemImage: systemImage)
         
-        super.init(frame: NSRect(x: 0, y: 0, width: 100, height: 60))
+        super.init(frame: NSRect(x: 0, y: 0, width: 60, height: 60))
         
         // 基本配置
         self.setButtonType(.momentaryPushIn)
@@ -1337,11 +1447,14 @@ struct ReminderView: View {
     let continueAction: () -> Void
     let stopAction: () -> Void
     
+    // 控制二级菜单显示
+    @State private var showingMenu = false
+    
     // 将秒转换为分:秒格式
     var formattedTime: String {
         let minutes = Int(appState.remainingReminderTime) / 60
         let seconds = Int(appState.remainingReminderTime) % 60
-        return String(format: "本次休息将在 %02d:%02d 后自动结束", minutes, seconds)
+        return String(format: "%02d:%02d", minutes, seconds)
     }
     
     var body: some View {
@@ -1360,61 +1473,130 @@ struct ReminderView: View {
 
             ZStack {
                 // 主要内容居中显示
-                VStack(spacing: 40) {
+                VStack(spacing: 10) {
 
                     Text("☕ 喝口水～活动一下～")
                         .font(.system(size: 66, weight: .bold))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
 
-
-
                     // 倒计时显示
                     Text(formattedTime)
-                        .font(.system(size: 20))
+                        .font(.system(size: 36, design: .monospaced))
                         .foregroundColor(.white)
-                        .padding(.top, 60)
-
-
+                        .padding(.top, 100)
+                        .padding(.bottom, 0)
 
                     // 按钮组 - 居中分布
                     HStack(spacing: 40) {
                         // 停止按钮 - 使用圆圈+X图标
                         HandCursorButton(
-                            title: "停止",
+                            title: "", // 空标题，只显示图标
                             systemImage: "xmark.circle",
-                            action: stopAction
+                            action: {
+                                // 显示二级菜单
+                                showingMenu.toggle()
+                            }
                         )
-                        .frame(width: 80, height: 60) 
-
-                        // 继续计时按钮 - 简化为"继续"，使用圆圈+重播图标
-                        HandCursorButton(
-                            title: "继续",
-                            systemImage: "repeat.circle",
-                            action: continueAction
-                        )
-                        .frame(width: 80, height: 60) 
-
-
+                        .frame(width: 55, height: 55) 
+                        .padding(.top, 0)
                     }
                 }
                 
-                // 励志短语靠屏幕底部显示
-                VStack {
-                    Spacer()
-                    
-                    Text(appState.inspirationalQuote)
-                        .font(.system(size: 20))
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                        .padding(.bottom, 50) // 底部边距
-                        .padding(.horizontal, 40) // 左右边距
+                // 二级菜单 - 精确定位在停止按钮下方
+                if showingMenu {
+                    // 使用GeometryReader和定位将菜单准确放置在停止按钮下方
+                    GeometryReader {geometry in
+                        ZStack {
+                            // 将菜单定位在屏幕中心下方，正好是停止按钮的位置
+                            VStack(spacing: 0) {
+                                // 三角形指示器
+                                Triangle()
+                                    .fill(Color.gray)
+                                    .frame(width: 20, height: 10)
+                                    .offset(y: 5) // 调整三角形位置，使其与菜单顶部对齐
+                                
+                                // 菜单项 - 固定宽度200px
+                                VStack(spacing: 0) {
+                                    MenuItem(title: "适时休息，重获专注")
+                                        .foregroundColor(.white)
+                                        .background(Color.gray)
+                                        .disabled(true)
+                                    
+                                    Divider()
+                                    
+                                    MenuItem(title: "重新开始")
+                                        .onTapGesture {
+                                            showingMenu = false
+                                            // 执行开始番茄钟的操作
+                                            continueAction()
+                                        }
+                                    
+                                    Divider()
+                                    
+                                    MenuItem(title: "停止休息")
+                                        .onTapGesture {
+                                            showingMenu = false
+                                            // 执行停止休息的操作
+                                            stopAction()
+                                        }
+                                    
+                                    Divider()
+                                    
+                                    MenuItem(title: "取消")
+                                        .onTapGesture {
+                                            showingMenu = false
+                                            // 取消操作，不执行任何动作
+                                        }
+                                }
+                                .frame(width: 300) // 设置固定宽度300px
+                                .background(Color(NSColor.controlBackgroundColor).opacity(0.9))
+                                .cornerRadius(8)
+                            }
+                            .position(
+                                x: geometry.size.width / 2, // 水平居中
+                                y: geometry.size.height / 2 + 238 // 垂直位置：屏幕中心偏下238px，确保显示在停止按钮下方
+                            )
+                        }
+                    }
                 }
             }
             
             .padding()
         }
         .ignoresSafeArea()
+    }
+    
+    // 自定义三角形视图
+    struct Triangle: Shape {
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            path.closeSubpath()
+            return path
+        }
+    }
+    
+    // 自定义菜单项视图
+    struct MenuItem: View {
+        let title: String
+        @State private var isHovered = false
+        
+        var body: some View {
+            Text(title)
+                .font(.system(size: 14))
+                .padding(.vertical, 12)
+                .padding(.horizontal, 30)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .foregroundColor(.white) // 始终保持白色
+                .background(isHovered ? Color.white.opacity(0.3) : Color.clear) // 降低背景透明度
+                .cornerRadius(4)
+                .onHover {
+                    isHovered = $0
+                }
+        }
     }
 }
 
