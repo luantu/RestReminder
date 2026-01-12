@@ -1480,9 +1480,9 @@ struct ReminderView: View {
         ZStack {
             // 使用桌面背景
             DesktopBackgroundView()
-                .opacity(0.9) // 设置整个背景图片为20%不透明度
+                .opacity(1) 
 
-            // 半透明遮罩 - 20%透明度（80%不透明度）
+            // 半透明遮罩 
             Color.black.opacity(0.2)
                 // 添加透明背景来捕获所有点击事件，避免崩溃
                 .contentShape(Rectangle())
