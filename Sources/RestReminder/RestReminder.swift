@@ -6,12 +6,42 @@ import Foundation
 class ImageCacheManager: ObservableObject {
     static let shared = ImageCacheManager()
     @Published var cachedImage: NSImage?
-    private let highResImageUrl = URL(string: "https://source.unsplash.com/random/3840x2160")!
+    private let highResImageUrl = URL(string: "https://picsum.photos/3840/2160")!
     private var isLoading = false
     
+    // 本地缓存文件路径
+    private var cacheFilePath: URL {
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return documentsDirectory.appendingPathComponent("desktop_background_cache.jpg")
+    }
+    
     private init() {
-        // 应用启动时就开始预加载图片
+        // 应用启动时先加载本地缓存
+        loadCachedImageFromDisk()
+        // 然后开始预加载新图片
         preloadImage()
+    }
+    
+    // 从本地磁盘加载缓存图片
+    private func loadCachedImageFromDisk() {
+        if FileManager.default.fileExists(atPath: cacheFilePath.path) {
+            if let image = NSImage(contentsOf: cacheFilePath) {
+                cachedImage = image
+            }
+        }
+    }
+    
+    // 保存图片到本地磁盘
+    private func saveImageToDisk(_ image: NSImage) {
+        if let tiffData = image.tiffRepresentation, let bitmapImage = NSBitmapImageRep(data: tiffData) {
+            if let jpegData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                do {
+                    try jpegData.write(to: cacheFilePath, options: .atomic)
+                } catch {
+                    // 保存失败不影响应用运行
+                }
+            }
+        }
     }
     
     // 预加载高清图片并缓存
@@ -30,6 +60,8 @@ class ImageCacheManager: ObservableObject {
             
             DispatchQueue.main.async {
                 self?.cachedImage = image
+                // 保存到本地磁盘，实现持久化缓存
+                self?.saveImageToDisk(image)
             }
         }
         
@@ -1183,10 +1215,10 @@ struct DesktopBackgroundView: NSViewRepresentable {
     
     // 使用本地备份方案（AppleScript获取桌面背景）作为备选
     private func useLocalBackupBackground(view: NSView) {
-        // 首先尝试直接使用桌面背景作为默认背景
+        // 直接使用桌面背景作为默认背景
         var desktopImage: NSImage?
         
-        // 方法1：尝试使用AppleScript获取桌面背景
+        // 使用AppleScript获取桌面背景
         let script = "tell application \"System Events\" to get picture of desktop 1"
         var error: NSDictionary?
         
@@ -1199,20 +1231,7 @@ struct DesktopBackgroundView: NSViewRepresentable {
             }
         }
         
-        // 方法2：如果前两种方法都失败，创建一个简单的渐变背景
-        if desktopImage == nil {
-            // 创建一个简单的渐变背景
-            desktopImage = NSImage(size: NSSize(width: 1920, height: 1080))
-            desktopImage?.lockFocus()
-            
-            // 创建渐变
-            let gradient = NSGradient(colors: [NSColor.blue, NSColor.purple])
-            gradient?.draw(in: NSRect(origin: .zero, size: desktopImage!.size), angle: 45)
-            
-            desktopImage?.unlockFocus()
-        }
-        
-        // 使用获取到的背景图片
+        // 如果成功获取到桌面背景图片，使用它
         if let image = desktopImage {
             view.layer?.contents = image
             view.layer?.contentsGravity = .resizeAspectFill
@@ -1461,10 +1480,10 @@ struct ReminderView: View {
         ZStack {
             // 使用桌面背景
             DesktopBackgroundView()
-                .opacity(0.7) // 设置整个背景图片为20%不透明度
+                .opacity(0.9) // 设置整个背景图片为20%不透明度
 
             // 半透明遮罩 - 20%透明度（80%不透明度）
-            Color.black.opacity(0.8)
+            Color.black.opacity(0.2)
                 // 添加透明背景来捕获所有点击事件，避免崩溃
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -1482,7 +1501,7 @@ struct ReminderView: View {
 
                     // 倒计时显示
                     Text(formattedTime)
-                        .font(.system(size: 36, design: .monospaced))
+                        .font(.system(size: 36, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                         .padding(.top, 100)
                         .padding(.bottom, 0)
@@ -1592,7 +1611,6 @@ struct ReminderView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .foregroundColor(.white) // 始终保持白色
                 .background(isHovered ? Color.white.opacity(0.3) : Color.clear) // 降低背景透明度
-                .cornerRadius(4)
                 .onHover {
                     isHovered = $0
                 }
