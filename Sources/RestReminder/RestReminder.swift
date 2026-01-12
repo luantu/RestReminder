@@ -157,6 +157,9 @@ class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
+        // 触发图片刷新
+        ImageCacheManager.shared.preloadImage()
+        
         print("AppState.showReminder: 设置showingReminder为true")
         showingReminder = true
         
@@ -507,6 +510,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         pauseItem.target = self
         menu.addItem(pauseItem)
 
+        let startRestItem = NSMenuItem(title: "开始休息", action: #selector(startRest), keyEquivalent: "")
+        startRestItem.target = self
+        menu.addItem(startRestItem)
+
         // 添加提醒间隔子菜单
         let intervalMenu = NSMenu(title: "提醒间隔")
 
@@ -848,6 +855,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func pauseTimer() {
         appState.pauseTimer()
+    }
+
+    @objc func startRest() {
+        appState.showReminder()
     }
 
     @objc @MainActor
