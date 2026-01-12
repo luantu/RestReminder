@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Foundation
+import QuartzCore
 
 // 图片缓存管理类
 class ImageCacheManager: ObservableObject {
@@ -275,7 +276,9 @@ class AppState: ObservableObject, @unchecked Sendable {
         settings = loadedSettings
         
         // 调试使用，这会覆盖didSet中设置的值
-        remainingTime = 3.0 // 
+        #if DEBUG
+        remainingTime = 3.0 // 调试模式下启用
+        #endif
         
         // 恢复正常配置：5分钟后自动关闭提醒
         reminderTimeout = 300 // 5分钟后自动关闭提醒
@@ -1175,6 +1178,13 @@ struct DesktopBackgroundView: NSViewRepresentable {
                 .sink { [weak self] newImage in
                     guard let self = self, let view = self.view, let image = newImage else { return }
                     DispatchQueue.main.async {
+                        // 添加过渡动画
+                        let transition = CATransition()
+                        transition.type = .fade
+                        transition.duration = 0.5
+                        transition.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                        view.layer?.add(transition, forKey: "contentsTransition")
+                        
                         // 只有在4K图片成功加载后，才替换桌面背景
                         view.layer?.contents = image
                         view.layer?.contentsGravity = .resizeAspectFill
