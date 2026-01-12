@@ -1,6 +1,7 @@
 # RestReminder
 
 一个macOS应用，用于定时全屏提醒休息，保护你的眼睛和身体健康。
+部分界面参考 JustFocus，纯自用，如有疑义联系我删除哈。
 
 ## 功能特点
 
@@ -13,12 +14,6 @@
 
 ## 支持的屏蔽应用
 
-默认屏蔽以下应用：
-- Keynote
-- Microsoft Teams
-- Zoom
-- FaceTime
-- Slack
 
 ## 安装和运行
 
