@@ -1515,17 +1515,20 @@ struct ReminderView: View {
                 // 主要内容居中显示
                 VStack(spacing: 10) {
 
+                    // 主标题 - 只保留阴影效果提高可读性
                     Text("☕ 喝口水～活动一下～")
                         .font(.system(size: 66, weight: .bold))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
+                        .shadow(color: .black, radius: 8, x: 0, y: 0)
 
-                    // 倒计时显示
+                    // 倒计时显示 - 只保留阴影效果
                     Text(formattedTime)
                         .font(.system(size: 36, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                         .padding(.top, 100)
                         .padding(.bottom, 0)
+                        .shadow(color: .black, radius: 6, x: 0, y: 0)
 
                     // 按钮组 - 居中分布
                     HStack(spacing: 40) {
