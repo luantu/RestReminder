@@ -1375,7 +1375,7 @@ class ButtonContentView: NSView {
 class CustomButton: NSButton {
     private let buttonAction: () -> Void // 重命名为 buttonAction，避免与 NSButton.action 冲突
     private let originalBackgroundColor: NSColor = .clear
-    private let hoverBackgroundColor: NSColor = .white.withAlphaComponent(0.1)
+    private let hoverBackgroundColor: NSColor = .clear // 去除悬停背景色
     private let contentView: ButtonContentView // 存储内容视图引用
     
     init(title: String, systemImage: String, action: @escaping () -> Void) {
@@ -1444,16 +1444,16 @@ class CustomButton: NSButton {
         self.layer?.backgroundColor = originalBackgroundColor.cgColor // 恢复背景
     }
     
-    // 重写 mouseDown 方法，添加点击效果
+    // 重写 mouseDown 方法，不添加点击效果
     override func mouseDown(with event: NSEvent) {
         super.mouseDown(with: event)
-        self.layer?.backgroundColor = hoverBackgroundColor.withAlphaComponent(0.2).cgColor // 点击时更明显的背景
+        // 不改变背景色
     }
     
-    // 重写 mouseUp 方法，恢复悬停状态
+    // 重写 mouseUp 方法，不改变背景状态
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
-        self.layer?.backgroundColor = hoverBackgroundColor.cgColor // 恢复悬停背景
+        // 不改变背景色
     }
     
     // 确保按钮能接收鼠标事件
@@ -1497,6 +1497,14 @@ struct ReminderView: View {
     @State private var isFadingIn = true
     // 控制是否启用呼吸动画
     @State private var isBreathingEnabled = true
+    
+    // 计算阴影效果：根据透明度动态计算白色光晕强度
+    private var buttonShadow: (color: Color, radius: CGFloat) {
+        // 当透明度越高时，白色光晕越强
+        let shadowOpacity = buttonOpacity * 0.5 // 光晕透明度范围：0.1到0.5
+        let shadowRadius = buttonOpacity * 8.0 // 光晕半径范围：1.6到8.0
+        return (color: Color.white.opacity(shadowOpacity), radius: shadowRadius)
+    }
     
     // 将秒转换为分:秒格式
     var formattedTime: String {
@@ -1593,6 +1601,7 @@ struct ReminderView: View {
                         .frame(width: 55, height: 55) 
                         .padding(.top, 0)
                         .opacity(buttonOpacity)
+                        .shadow(color: buttonShadow.color, radius: buttonShadow.radius, x: 0, y: 0) // 添加动态白色光晕效果
                         .shadow(color: .black, radius: 6, x: 0, y: 0) // 添加黑色阴影，效果同文字
                         .onAppear {
                             // 启动呼吸动画
