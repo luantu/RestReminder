@@ -1489,12 +1489,60 @@ struct ReminderView: View {
     
     // 控制二级菜单显示
     @State private var showingMenu = false
+    // 呼吸灯动画透明度
+    @State private var buttonOpacity = 0.3
+    // 控制呼吸动画的计时器
+    @State private var timer: Timer? = nil
+    // 控制呼吸动画的方向（true: 淡入, false: 淡出）
+    @State private var isFadingIn = true
+    // 控制是否启用呼吸动画
+    @State private var isBreathingEnabled = true
     
     // 将秒转换为分:秒格式
     var formattedTime: String {
         let minutes = Int(appState.remainingReminderTime) / 60
         let seconds = Int(appState.remainingReminderTime) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+    
+    // 启动呼吸动画
+    private func startBreathingAnimation() {
+        isBreathingEnabled = true
+        isFadingIn = true
+        buttonOpacity = 0.3 // 设置初始透明度
+        
+        // 清除现有的计时器
+        timer?.invalidate()
+        
+        // 创建新的计时器，每50毫秒更新一次透明度
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+            if self.isBreathingEnabled {
+                if self.isFadingIn {
+                    // 淡入效果
+                    self.buttonOpacity += 0.02
+                    if self.buttonOpacity >= 1.0 {
+                        self.buttonOpacity = 1.0
+                        self.isFadingIn = false
+                    }
+                } else {
+                    // 淡出效果
+                    self.buttonOpacity -= 0.02
+                    if self.buttonOpacity <= 0.2 { // 降低初始透明度，增强呼吸效果
+                        self.buttonOpacity = 0.2
+                        self.isFadingIn = true
+                    }
+                }
+            }
+        }
+    }
+    
+    // 停止呼吸动画
+    private func stopBreathingAnimation() {
+        isBreathingEnabled = false
+        // 立即将透明度设置为1.0
+        buttonOpacity = 1.0
+        // 清除计时器
+        timer?.invalidate()
     }
     
     var body: some View {
@@ -1508,7 +1556,8 @@ struct ReminderView: View {
                 // 添加透明背景来捕获所有点击事件，避免崩溃
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    // 不执行任何操作，仅用于捕获点击事件
+                    // 点击非菜单区域关闭二级菜单
+                    showingMenu = false
                 }
 
             ZStack {
@@ -1543,6 +1592,25 @@ struct ReminderView: View {
                         )
                         .frame(width: 55, height: 55) 
                         .padding(.top, 0)
+                        .opacity(buttonOpacity)
+                        .shadow(color: .black, radius: 6, x: 0, y: 0) // 添加黑色阴影，效果同文字
+                        .onAppear {
+                            // 启动呼吸动画
+                            startBreathingAnimation()
+                        }
+                        .onHover {
+                            if $0 {
+                                // 鼠标进入时，停止呼吸动画
+                                stopBreathingAnimation()
+                            } else {
+                                // 鼠标离开时，重新开始呼吸动画
+                                startBreathingAnimation()
+                            }
+                        }
+                        .onDisappear {
+                            // 视图消失时，清除计时器
+                            timer?.invalidate()
+                        }
                     }
                 }
                 
