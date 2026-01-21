@@ -10,10 +10,19 @@ class ImageCacheManager: ObservableObject {
     private let highResImageUrl = URL(string: "https://picsum.photos/3840/2160")!
     private var isLoading = false
     
-    // 本地缓存文件路径
-    private var cacheFilePath: URL {
+    // 本地缓存目录路径
+    private var cacheDirectory: URL {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsDirectory.appendingPathComponent("desktop_background_cache.jpg")
+        let cacheDir = documentsDirectory.appendingPathComponent("desktop_background_cache")
+        // 确保缓存目录存在
+        if !FileManager.default.fileExists(atPath: cacheDir.path) {
+            do {
+                try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+            } catch {
+                // 目录创建失败不影响应用运行
+            }
+        }
+        return cacheDir
     }
     
     private init() {
@@ -25,24 +34,36 @@ class ImageCacheManager: ObservableObject {
     
     // 从本地磁盘加载缓存图片
     private func loadCachedImageFromDisk() {
-        if FileManager.default.fileExists(atPath: cacheFilePath.path) {
-            if let image = NSImage(contentsOf: cacheFilePath) {
+        // 尝试加载最新的缓存图片
+        let cacheFiles = getCacheFiles()
+        if let latestFile = cacheFiles.last {
+            if let image = NSImage(contentsOf: latestFile) {
                 cachedImage = image
             }
+        } else {
+            // 如果没有缓存文件，使用默认图片
+            cachedImage = nil
         }
     }
     
     // 保存图片到本地磁盘
     private func saveImageToDisk(_ image: NSImage) {
+        // 生成唯一的文件名，基于时间戳
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let filePath = cacheDirectory.appendingPathComponent("\(timestamp).jpg")
+        
         if let tiffData = image.tiffRepresentation, let bitmapImage = NSBitmapImageRep(data: tiffData) {
             if let jpegData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
                 do {
-                    try jpegData.write(to: cacheFilePath, options: .atomic)
+                    try jpegData.write(to: filePath, options: .atomic)
                 } catch {
                     // 保存失败不影响应用运行
                 }
             }
         }
+        
+        // 清理旧缓存，只保留最近的5张图片
+        cleanupOldCache()
     }
     
     // 预加载高清图片并缓存
@@ -54,10 +75,16 @@ class ImageCacheManager: ObservableObject {
             defer { self?.isLoading = false }
             
             guard let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                // 网络不可用时，使用随机缓存图片
+                self?.useRandomCachedImage()
                 return
             }
             
-            guard let image = NSImage(data: data) else { return }
+            guard let image = NSImage(data: data) else { 
+                // 图片解析失败时，使用随机缓存图片
+                self?.useRandomCachedImage()
+                return
+            }
             
             DispatchQueue.main.async {
                 self?.cachedImage = image
@@ -72,6 +99,49 @@ class ImageCacheManager: ObservableObject {
     // 获取缓存图片，如果没有则返回nil
     func getCachedImage() -> NSImage? {
         return cachedImage
+    }
+    
+    // 获取所有缓存文件，按创建时间排序
+    private func getCacheFiles() -> [URL] {
+        do {
+            let files = try FileManager.default.contentsOfDirectory(at: cacheDirectory, includingPropertiesForKeys: nil)
+            return files.filter { $0.pathExtension.lowercased() == "jpg" }.sorted {
+                // 按文件名（时间戳）排序
+                return $0.lastPathComponent < $1.lastPathComponent
+            }
+        } catch {
+            return []
+        }
+    }
+    
+    // 清理旧缓存，只保留最近的5张图片
+    private func cleanupOldCache() {
+        let cacheFiles = getCacheFiles()
+        if cacheFiles.count > 5 {
+            // 删除最旧的文件
+            let filesToDelete = cacheFiles.prefix(cacheFiles.count - 5)
+            for file in filesToDelete {
+                do {
+                    try FileManager.default.removeItem(at: file)
+                } catch {
+                    // 删除失败不影响应用运行
+                }
+            }
+        }
+    }
+    
+    // 使用随机缓存图片
+    private func useRandomCachedImage() {
+        let cacheFiles = getCacheFiles()
+        if !cacheFiles.isEmpty {
+            // 随机选择一张缓存图片
+            let randomIndex = Int.random(in: 0..<cacheFiles.count)
+            if let image = NSImage(contentsOf: cacheFiles[randomIndex]) {
+                DispatchQueue.main.async {
+                    self.cachedImage = image
+                }
+            }
+        }
     }
 }
 
@@ -500,7 +570,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func createMenu() {
         menu = NSMenu()
 
-        // 添加菜单项
+        let startRestItem = NSMenuItem(title: "开始休息", action: #selector(startRest), keyEquivalent: "")
+        startRestItem.target = self
+        menu.addItem(startRestItem)
+
         let resetItem = NSMenuItem(title: "重新计时", action: #selector(resetTimer), keyEquivalent: "")
         resetItem.target = self
         menu.addItem(resetItem)
@@ -509,10 +582,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let pauseItem = NSMenuItem(title: pauseTitle, action: #selector(pauseTimer), keyEquivalent: "")
         pauseItem.target = self
         menu.addItem(pauseItem)
-
-        let startRestItem = NSMenuItem(title: "开始休息", action: #selector(startRest), keyEquivalent: "")
-        startRestItem.target = self
-        menu.addItem(startRestItem)
 
         // 添加提醒间隔子菜单
         let intervalMenu = NSMenu(title: "提醒间隔")
