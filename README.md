@@ -2,6 +2,7 @@
 
 一个macOS应用，用于定时全屏提醒休息，保护你的眼睛和身体健康。
 部分界面参考 JustFocus，纯自用，如有疑义联系我删除哈。
+<img width="2048" height="1152" alt="微信图片_20260121161635_140_251" src="https://github.com/user-attachments/assets/57bbfde5-0994-41e5-9159-839294c40824" />
 
 ## 功能特点
 
