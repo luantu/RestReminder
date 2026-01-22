@@ -71,17 +71,25 @@ class ImageCacheManager: ObservableObject {
         guard !isLoading else { return }
         isLoading = true
         
-        let task = URLSession.shared.dataTask(with: highResImageUrl) { [weak self] data, response, error in            
+        // 创建带有超时配置的URLSession
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 180 // 3分钟超时
+        config.timeoutIntervalForResource = 180 // 3分钟资源超时
+        let session = URLSession(configuration: config)
+        
+        let task = session.dataTask(with: highResImageUrl) { [weak self] data, response, error in            
             defer { self?.isLoading = false }
             
             guard let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                 // 网络不可用时，使用随机缓存图片
+                print("网络请求失败，使用随机缓存图片")
                 self?.useRandomCachedImage()
                 return
             }
             
             guard let image = NSImage(data: data) else { 
                 // 图片解析失败时，使用随机缓存图片
+                print("图片解析失败，使用随机缓存图片")
                 self?.useRandomCachedImage()
                 return
             }
@@ -117,9 +125,9 @@ class ImageCacheManager: ObservableObject {
     // 清理旧缓存，只保留最近的5张图片
     private func cleanupOldCache() {
         let cacheFiles = getCacheFiles()
-        if cacheFiles.count > 5 {
+        if cacheFiles.count > 100 {
             // 删除最旧的文件
-            let filesToDelete = cacheFiles.prefix(cacheFiles.count - 5)
+            let filesToDelete = cacheFiles.prefix(cacheFiles.count - 100)
             for file in filesToDelete {
                 do {
                     try FileManager.default.removeItem(at: file)
